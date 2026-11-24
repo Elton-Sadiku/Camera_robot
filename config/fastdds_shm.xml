@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fast DDS profile for 90 Hz D455 depth (814 KB/msg) and clouds on one host.
+     Default SHM segment is 512 KB (< one depth frame) -> best-effort frames get lost.
+     export FASTRTPS_DEFAULT_PROFILES_FILE=<path>/config/fastdds_shm.xml  (in EVERY terminal/node) -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>shm_big</transport_id>
+      <type>SHM</type>
+      <segment_size>33554432</segment_size>   <!-- 32 MB: ~40 depth frames in flight -->
+      <maxMessageSize>8388608</maxMessageSize>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>udp</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="d455_participant" is_default_profile="true">
+    <rtps>
+      <useBuiltinTransports>false</useBuiltinTransports>
+      <userTransports>
+        <transport_id>shm_big</transport_id>
+        <transport_id>udp</transport_id>
+      </userTransports>
+    </rtps>
+  </participant>
+</profiles>
