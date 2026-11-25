@@ -58,8 +58,10 @@ bash scripts/install_ubuntu.sh
 ```
 This installs ROS 2 Humble desktop, realsense2_camera, the RealSense udev rule, and pyrealsense2 + CPU torch for the system Python 3.10. numpy stays the apt 1.21 build, as ROS Humble needs. Then, in **every** terminal you use for this project:
 ```bash
-source ~/Desktop/camera/Frame+Deepth/env.sh
+cd /path/to/Camera_robot
+source ./env.sh
 ```
+Replace `/path/to/Camera_robot` with the directory containing this README. You can find it with `pwd` after entering the cloned repository. `env.sh` determines its own location, so no desktop-specific path is required. If you only want to source it from elsewhere, use `source /path/to/Camera_robot/env.sh`.
 `env.sh` steps out of conda in that shell (your conda setup is untouched), sources ROS, and sets the Fast DDS profile. Then:
 ```bash
 python3 pointcloud/d455_pointcloud.py
@@ -115,19 +117,26 @@ source /opt/ros/humble/setup.bash && ros2 launch ros2/d455.launch.py            
 ### 3. End-to-end workflow
 1. **Calibrate:** `python3 pointcloud/d455_pointcloud.py --save-intrinsics config/d455_intrinsics.json`, and measure the mount → set `MOUNT_POS/RPY` and the launch args.
 2. **Check real:** `ros2 launch ros2/d455.launch.py`, then in RViz set Fixed Frame = `base_link` and add PointCloud2 `/camera/camera/depth/color/points`. The floor should be flat at z = 0.
-3. **Check sim matches real:** run `~/IsaacLab/isaaclab.sh -p isaac/sim_publish_d455.py --enable_cameras` (env vars in the file header; `--enable_cameras` is required with `--headless`), then compare the sim and real clouds and `camera_info` K in RViz:
+3. **Check sim matches real:** set `ISAACLAB_ROOT` to the directory where you installed Isaac Lab, then run:
+   ```bash
+   export ISAACLAB_ROOT=/path/to/IsaacLab
+   "$ISAACLAB_ROOT/isaaclab.sh" -p "$PWD/isaac/sim_publish_d455.py" --enable_cameras
+   ```
+   The `--enable_cameras` argument is required with `--headless`. Set the ROS variables documented in `isaac/sim_publish_d455.py`, then compare the sim and real clouds and `camera_info` K in RViz:
    ```bash
    ros2 topic echo --once /camera/camera/depth/camera_info
    ```
 4. **Train:** add `d455_camera_cfg(...)`, `D455_OBS` and `D455_MOUNT_EVENT` to your env cfg (snippet at the top of `isaac/d455_cfg.py`), then:
    ```bash
-   ~/IsaacLab/isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py --task <YourTask> --enable_cameras --headless
+   export ISAACLAB_ROOT=/path/to/IsaacLab
+   "$ISAACLAB_ROOT/isaaclab.sh" -p scripts/reinforcement_learning/rsl_rl/train.py \
+     --task <YourTask> --enable_cameras --headless
    ```
 5. **Export:** `play.py --task <YourTask> --enable_cameras` writes `logs/rsl_rl/<task>/<run>/exported/policy.pt` (TorchScript).
 6. **Sim-in-the-loop:** run `ros2/policy_node.py -p policy:=.../policy.pt` against step 3's simulator (32FC1). Actions should match play.py.
 7. **Deploy:** the same `policy_node.py` against the real camera (16UC1), with the robot driver subscribed to `policy/action`.
 
 ### Isaac Sim ↔ ROS 2 Humble notes
-- Isaac Sim 5.1 runs Python 3.11, so it **cannot** load system Humble's Python 3.10 rclpy. The bridge ships its own Humble libs (`~/isaacsim/exts/isaacsim.ros2.bridge/humble/lib`). Set `ROS_DISTRO=humble`, `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and `FASTRTPS_DEFAULT_PROFILES_FILE`, and keep the same `ROS_DOMAIN_ID` in every terminal. When stopping a headless run, make sure the `python` child process has exited too: killing `isaaclab.sh` alone can leave it publishing.
+- Isaac Sim 5.1 runs Python 3.11, so it **cannot** load system Humble's Python 3.10 rclpy. The bridge ships its own Humble libs at `/path/to/isaacsim/exts/isaacsim.ros2.bridge/humble/lib`. Set `ROS_DISTRO=humble`, `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and `FASTRTPS_DEFAULT_PROFILES_FILE`, and keep the same `ROS_DOMAIN_ID` in every terminal. Replace `/path/to/isaacsim` with the actual Isaac Sim installation directory. When stopping a headless run, make sure the `python` child process has exited too: killing `isaaclab.sh` alone can leave it publishing.
 - Sim depth is `32FC1` in metres. Real depth is `16UC1` in millimetres. `policy_node.py` handles both.
 - Rendering 848×480 at 90 Hz for thousands of envs is not needed. The policy rate (e.g. 30–50 Hz) only has to see the *latest* frame on the real robot, which is what keep-last-1 QoS gives you.

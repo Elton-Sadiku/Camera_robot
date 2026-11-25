@@ -6,8 +6,9 @@ The camera uses the mount from shared.d455_model MOUNT_XYZ / MOUNT_RPY (example 
 the robot base is the world origin. The table below is a made-up example, not a measured table.
 
   export ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/isaacsim/exts/isaacsim.ros2.bridge/humble/lib  # only if ROS isn't sourced
-  ~/IsaacLab/isaaclab.sh -p isaac/sim_publish_d455.py [--headless --enable_cameras]
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/isaacsim/exts/isaacsim.ros2.bridge/humble/lib  # only if ROS isn't sourced
+  export ISAACLAB_ROOT=/path/to/IsaacLab
+  "$ISAACLAB_ROOT/isaaclab.sh" -p /path/to/Camera_robot/isaac/sim_publish_d455.py [--headless --enable_cameras]
 """
 import argparse
 import sys
