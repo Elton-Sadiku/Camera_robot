@@ -29,12 +29,17 @@ DEPTH_PROFILE = (424, 240, 90)   # width, height, fps
 DISPARITY_SHIFT = 0
 DECIMATION = 1                   # 1 = policy sees full 424x240 (egg ~33 px at 0.3 m); 2 -> 212x120 (faster training)
 FAR_LIMIT_M = 1.5                # depth beyond this is dropped (egg-grasping workspace: 0.16-1.5 m)
-                                 # with the camera 1.2 m up / 23 deg down, only a thin floor strip (~1.0-1.2 m ahead) is in range
+                                 # camera 1.15 m up, tilted 5 deg down: view spans -24.5 (above) to 34.5 deg below
+                                 # horizontal, a 0.75 m table top is visible from ~0.58 m ahead, the floor from ~1.7 m
 
 # Camera mount: camera_link pose in base_link (metres, radians; positive pitch = tilted down).
-# EXAMPLE values for now - the real mount is NOT measured yet; replace them once measured. Read by ros2/d455.launch.py, isaac/d455_cfg.py and isaac/sim_publish_d455.py.
-MOUNT_XYZ = (0.05, 0.0, 1.20)
-MOUNT_RPY = (0.0, 0.40, 0.0)     # 0.40 rad = 23 deg down
+# Measured from the meshari robot CAD (Isaac SIm/meshari 1.usd, isaac/meshari_d455.py): the D455 sits in the
+# torso camera slot, looking forward, tilted 5 deg down (rebuild meshari_d455.usd with --pitch-deg 5 to match). This robot's base_link has FORWARD = -Y, LEFT = +X, UP = +Z
+# (origin on the floor), hence yaw = -90 deg. camera_link = the depth origin (left imager), as in realsense-ros:
+# slot centre (0.1306, -0.043, 1.153) + 47.5 mm to the robot's left.
+# Read by ros2/d455.launch.py, isaac/d455_cfg.py, isaac/sim_publish_d455.py; isaac/meshari_d455.py prints it.
+MOUNT_XYZ = (0.1781, -0.043, 1.153)
+MOUNT_RPY = (0.0, 0.0872665, -1.5707963)  # pitch 0.087 rad = 5 deg down, yaw -90 deg -> looking along base_link -Y
 
 
 def depth_window(fx, baseline_m=0.095, shift=DISPARITY_SHIFT, far=FAR_LIMIT_M):
@@ -113,3 +118,61 @@ def real_obs(depth_u16, depth_scale=0.001, stride=DECIMATION, z_range=Z_RANGE, d
     d = np.ascontiguousarray(depth_u16[::stride, ::stride])
     z = torch.from_numpy(d.astype(np.float32) * (depth_scale if d.dtype == np.uint16 else 1.0))
     return to_obs(z.to(device), z_range)[None] / z_range[1]
+
+
+# ---------------------------------------------------------------- egg detector input (detection/, ros2/egg_detector_node.py)
+
+def stereo_shadow(depth_m: torch.Tensor, fx: float, baseline_m=0.095, extra_px=(1, 5), max_shift=24) -> torch.Tensor:
+    """D455 stereo occlusion shadow on a (N, H, W) depth in metres (sim only; 0 = invalid).
+
+    The depth origin is the LEFT imager. Background just LEFT of a nearer object is hidden from the
+    right imager, so the real camera reports no depth there: pixel p is shadowed when a pixel k to its
+    right (k = 1..max_shift) has a disparity larger by more than k, disparity = fx * baseline / z.
+    The real D455 shadow is wider than this geometry (left-right check, edge filtering), so the mask is
+    grown by a random 1-5 px per image, mostly sideways. Seen on the real egg as a black ring on its left.
+    """
+    z = depth_m
+    disp = torch.where(z > 0, fx * baseline_m / z.clamp_min(1e-3), torch.zeros_like(z))
+    shadow = torch.zeros_like(z, dtype=torch.bool)
+    w = z.shape[-1]
+    for k in range(1, min(max_shift, w - 1) + 1):
+        shadow[..., :w - k] |= (disp[..., k:] - disp[..., :w - k]) > k
+    shadow &= z > 0
+    n = z.shape[0] if z.dim() == 3 else 1
+    m = shadow.reshape(n, 1, *z.shape[-2:]).float()
+    grow = torch.randint(extra_px[0], extra_px[1] + 1, (n,), device=z.device)
+    out = torch.zeros_like(m)
+    for i in range(n):   # grow sideways by `grow[i]` px and 1 px up/down
+        g = int(grow[i])
+        out[i] = torch.nn.functional.max_pool2d(m[i:i + 1], (3, 2 * g + 1), stride=1, padding=(1, g))
+    return torch.where(out.reshape(z.shape) > 0, torch.zeros_like(z), z)
+
+
+def denoise(depth_m: torch.Tensor, sigma=1.0, radius=2, min_support=0.5, edge_m=0.03) -> torch.Tensor:
+    """Masked (edge-aware) Gaussian on an (..., H, W) depth in metres, 0 = invalid. Same on sim and real.
+
+    A plain Gaussian mixes the 0s of missing pixels into real depth and invents distances at every hole
+    and edge. This one averages only VALID neighbours, and only those within edge_m of the centre pixel
+    (so the egg is not blurred into the table). A missing pixel is filled when at least min_support of the
+    Gaussian weight around it is valid: small speckle holes close, large shadows stay empty.
+    """
+    shape = depth_m.shape
+    z = depth_m.reshape(-1, 1, *shape[-2:])
+    k = 2 * radius + 1
+    ax = torch.arange(k, device=z.device, dtype=z.dtype) - radius
+    g = torch.exp(-(ax[:, None] ** 2 + ax[None, :] ** 2) / (2 * sigma * sigma)).reshape(1, k * k, 1)
+    nb = torch.nn.functional.unfold(z, k, padding=radius)                    # (B, k*k, H*W) neighbours
+    c = z.reshape(z.shape[0], 1, -1)                                          # centre depth
+    valid = nb > 0
+    near = ((nb - c).abs() < edge_m) | (c <= 0)                              # holes: any valid neighbour
+    w = g * (valid & near).to(z.dtype)
+    sw = w.sum(1, keepdim=True)
+    out = (w * nb).sum(1, keepdim=True) / sw.clamp_min(1e-9)
+    keep = (c > 0) | (sw / g.sum() >= min_support)
+    out = torch.where(keep & (sw > 0), out, torch.zeros_like(out))
+    return out.reshape(shape)
+
+
+def detector_input(depth_m: torch.Tensor, z_range=Z_RANGE) -> torch.Tensor:
+    """(..., H, W) metres -> what the egg detector sees: to_obs, masked Gaussian, / z_max. Sim and real."""
+    return denoise(to_obs(depth_m, z_range)) / z_range[1]

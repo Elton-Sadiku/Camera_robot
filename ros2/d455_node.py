@@ -41,10 +41,26 @@ class D455Node(Node):
         ns = p("topic_prefix", "/camera/camera/depth")
 
         w, h, fps = DEPTH_PROFILE  # one source of truth, shared with the policy node and Isaac Lab
+        # RealSense temporal filter (~0.1 ms): averages each pixel over recent frames and keeps a pixel that was
+        # valid in at least 1 of the last 8 frames (holes_fill 6). Measured on this D455 at a low table angle:
+        # table depth 24.5% -> 33.5% valid, noise 1.5 -> 0.9 mm, flicker 4.5% -> 0.7%. temporal_filter:=false = raw.
+        # (A stronger laser or longer exposure measured worse here; holes_fill 8 never forgets = ghosts when objects move.)
+        filters = []
+        if p("temporal_filter", True):
+            import pyrealsense2 as rs
+            tf = rs.temporal_filter()
+            tf.set_option(rs.option.holes_fill, float(p("holes_fill", 6)))
+            filters.append(tf)
         self.cam = D455PointCloud(width=p("width", w), height=p("height", h), fps=p("fps", fps), decimation=1,
                                   disparity_shift=p("disparity_shift", DISPARITY_SHIFT),
                                   far_limit_m=p("far_limit_m", FAR_LIMIT_M),
-                                  queue_size=p("queue_size", 2))
+                                  queue_size=p("queue_size", 2), filters=filters)
+        # make sure no visual preset left over from other tools (e.g. "high density") is active: it can blind the
+        # camera below ~1.6 m. Default preset = what every measurement and recording in this project used.
+        sensor = self.cam.profile.get_device().first_depth_sensor()
+        import pyrealsense2 as rs
+        if sensor.supports(rs.option.visual_preset):
+            sensor.set_option(rs.option.visual_preset, 1)   # 1 = Default
         self.get_logger().info(f"D455 {self.cam.intrinsics.width}x{self.cam.intrinsics.height}@{fps}, "
                                f"measuring {self.cam.z_range[0]:.2f}-{self.cam.z_range[1]:.2f} m")
         self.cloud_rays = D455PointCloud._ray_table(self.cam.intrinsics, max(self.cloud_dec, 1))
