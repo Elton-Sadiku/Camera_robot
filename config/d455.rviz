@@ -21,11 +21,11 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/TF
       Enabled: true
-      Marker Scale: 0.3
+      Marker Scale: 0.15
       Name: TF
       Show Arrows: true
       Show Axes: true
-      Show Names: true
+      Show Names: false
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -96,7 +96,7 @@ Visualization Manager:
       Color: 233; 164; 79
       Enabled: true
       History Length: 1
-      Name: Egg (real)
+      Name: Egg yolo (real)
       Radius: 0.03
       Topic:
         Depth: 5
@@ -111,7 +111,7 @@ Visualization Manager:
       Color: 255; 120; 40
       Enabled: true
       History Length: 1
-      Name: Egg (sim)
+      Name: Egg yolo (sim)
       Radius: 0.03
       Topic:
         Depth: 5
@@ -120,6 +120,30 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /sim/egg/point
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: YOLO egg boxes (real)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /yolo/dgb_bb_markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: YOLO egg boxes (sim)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /sim/yolo/dgb_bb_markers
       Value: true
   Enabled: true
   Global Options:
@@ -139,7 +163,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.8
+      Distance: 1.3
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.06
         Stereo Focal Distance: 1
@@ -147,17 +171,17 @@ Visualization Manager:
         Value: false
       Focal Point:
         X: 0.13
-        Y: -0.6
-        Z: 0.8
+        Y: -0.4
+        Z: 0.98
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.5
+      Pitch: 0.6
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.2
+      Yaw: 1.3
     Saved: ~
 Window Geometry:
   Displays:

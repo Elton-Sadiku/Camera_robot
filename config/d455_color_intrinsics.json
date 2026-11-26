@@ -1,0 +1,17 @@
+{
+  "width": 640,
+  "height": 480,
+  "fx": 385.7147521972656,
+  "fy": 385.33953857421875,
+  "cx": 322.6768493652344,
+  "cy": 240.623046875,
+  "model": "plumb_bob",
+  "D": [
+    -0.054613497108221054,
+    0.06414768099784851,
+    -0.0010362560860812664,
+    -8.155900104611646e-06,
+    -0.020994462072849274
+  ],
+  "note": "real D455 colour camera (realsense2_camera rgb_camera.color_profile 640,480,30), read from /camera/camera/color/camera_info"
+}

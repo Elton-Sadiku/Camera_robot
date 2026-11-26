@@ -7,11 +7,14 @@ What it does
   3. adds a depth camera with the REAL D455 intrinsics (config/d455_intrinsics.json, 424x240)
      at the left-imager position, where the real D455 has its depth origin
   4. adds an OmniGraph that, on Play, publishes the same message types / frame ids as the real
-     camera (ros2/d455_node.py), under the namespace /sim so sim and real can run side by side:
+     camera (realsense2_camera via ros2/d455.launch.py), under the namespace /sim so sim and real can run side by side:
         /sim/camera/camera/depth/image_rect_raw    sensor_msgs/Image 32FC1 (metres)
         /sim/camera/camera/depth/camera_info       sensor_msgs/CameraInfo
         /sim/camera/camera/depth/color/points      sensor_msgs/PointCloud2
-        /sim/camera/camera/color/image_raw         sensor_msgs/Image rgb8 (sim extra, 640x360)
+        /sim/camera/camera/color/image_raw         sensor_msgs/Image rgb8 (640x480, real colour intrinsics)
+        /sim/camera/camera/color/camera_info       sensor_msgs/CameraInfo
+        /sim/camera/camera/aligned_depth_to_color/image_raw    32FC1 metres, rendered from the COLOR camera
+        /sim/camera/camera/aligned_depth_to_color/camera_info  (= realsense2_camera align_depth.enable:=true)
      the real D455 stays on /camera/camera/... ; --ns camera/camera puts the sim on the real topics
      (then run only one of them). frame ids: camera_depth_optical_frame / camera_color_optical_frame
      The robot's existing ActionGraph keeps publishing /joint_states and listening on /joint_command.
@@ -21,6 +24,9 @@ Run (from the Camera_robot folder). isaac/isaac_ros2.sh sets ROS_DISTRO + the br
   isaac/isaac_ros2.sh isaac/meshari_d455.py                  # build + save meshari_d455.usd, then exit
   isaac/isaac_ros2.sh isaac/meshari_d455.py --run            # build, save, and publish (GUI window)
   isaac/isaac_ros2.sh isaac/meshari_d455.py --run --headless # same without a window
+  ... --run --test-egg                                         # also put the test table + egg in front (not saved)
+  ... --run --drop-egg                                         # same, but the egg falls onto the table with real physics
+  ... --run --twin                                             # the sim egg follows the REAL camera's egg (/egg/point)
 Check from another terminal:  source ./env.sh && ros2 topic hz /sim/camera/camera/depth/image_rect_raw
 """
 import argparse
@@ -31,9 +37,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent  # Camera_robot/
 ap = argparse.ArgumentParser()
 ap.add_argument("--src", default=str(ROOT / "Isaac SIm" / "meshari 1.usd"))
+ap.add_argument("--test-egg", action="store_true", help="with --run: add the test table + egg (isaac/add_test_egg.py), not saved")
+ap.add_argument("--drop-egg", action="store_true", help="with --run: table + egg dropped with real physics (isaac/drop_egg.py)")
+ap.add_argument("--twin", action="store_true", help="with --run: table + egg that follows the real egg (isaac/egg_twin.py)")
+ap.add_argument("--twin-real-table", type=float, default=0.992,
+                help="twin: z of the REAL table in base_link (m); the sim egg keeps its height above it. 0.992 = desk test rig")
+ap.add_argument("--twin-real-z", action="store_true", help="twin: use the real Z as is (camera on the robot, same table)")
 ap.add_argument("--out", default=str(ROOT / "Isaac SIm" / "meshari_d455.usd"))
-ap.add_argument("--pitch-deg", type=float, default=5.0,
-                help="camera tilt, positive = down (default 5, keep equal to shared/d455_model.py MOUNT_RPY pitch)")
+ap.add_argument("--roll-deg", type=float, default=0.0, help="camera roll; 0 = straight in the torso slot")
+ap.add_argument("--pitch-deg", type=float, default=11.55,
+                help="camera tilt, positive = down (default 11.55 = measured on the real D455, keep equal to shared/d455_model.py MOUNT_RPY pitch)")
 ap.add_argument("--run", action="store_true", help="after saving, press Play and keep publishing")
 ap.add_argument("--headless", action="store_true")
 ap.add_argument("--ns", default="sim/camera/camera",
@@ -66,7 +79,8 @@ FORWARD_YAW_DEG = -90.0                    # D455 asset looks along +X; rotate i
 MOUNT = PARENT_LINK + "/camera_link"       # = ROS camera_link (x fwd, y left, z up)
 D455_ASSET = "/Isaac/Sensors/Intel/RealSense/rsd455.usd"
 DEPTH_ORIGIN_IN_LINK = (0.0, 0.0475, 0.0)  # left imager: the real D455's depth origin
-COLOR_RES = (640, 360)
+COLOR_CAL = json.loads((ROOT / "config" / "d455_color_intrinsics.json").read_text())   # real colour camera
+COLOR_RES = (COLOR_CAL["width"], COLOR_CAL["height"])   # 640x480, fx 385.7 -> 79 deg HFOV like the real D455
 
 NS = args.ns.strip("/")
 DEPTH_FRAME, COLOR_FRAME = "camera_depth_optical_frame", "camera_color_optical_frame"
@@ -88,7 +102,7 @@ def to_parent(stage, parent_path, world_pos):
 
 def mount_camera(stage):
     link = UsdGeom.Xform.Define(stage, MOUNT).GetPrim()
-    set_rt(link, to_parent(stage, PARENT_LINK, SLOT_CENTER), (0.0, args.pitch_deg, FORWARD_YAW_DEG))
+    set_rt(link, to_parent(stage, PARENT_LINK, SLOT_CENTER), (args.roll_deg, args.pitch_deg, FORWARD_YAW_DEG))
 
     # visual D455 (official NVIDIA model, real size 124 x 29 x 26 mm, origin = front glass)
     body = stage.DefinePrim(MOUNT + "/D455", "Xform")
@@ -111,6 +125,15 @@ def mount_camera(stage):
         if p.GetTypeName() == "IsaacImuSensor":
             p.SetActive(False)
     color = next((p for p in Usd.PrimRange(body) if p.IsA(UsdGeom.Camera) and "color" in p.GetName().lower()), None)
+    if color:   # near clip 5 cm, so the aligned depth (rendered by this camera) sees eggs from ~15 cm
+        cc = UsdGeom.Camera(color)
+        cc.GetClippingRangeAttr().Set(Gf.Vec2f(0.05, 20.0))
+        # REAL colour intrinsics (config/d455_color_intrinsics.json): the asset's camera is ~90 deg wide, which
+        # made objects (the egg) ~18 % smaller in pixels than on the real D455. Keep its focal length, set apertures.
+        f = cc.GetFocalLengthAttr().Get() or 1.93
+        cc.GetHorizontalApertureAttr().Set(COLOR_RES[0] * f / COLOR_CAL["fx"])
+        cc.GetVerticalApertureAttr().Set(COLOR_RES[1] * f / COLOR_CAL["fy"])
+        print(f"[d455] colour camera {COLOR_RES[0]}x{COLOR_RES[1]}, fx={COLOR_CAL['fx']:.1f} px (real D455 calibration)")
 
     # depth camera with the real calibration (Omniverse has no principal-point offset: cx, cy
     # are taken as the image centre; the real ones are 1.5 px off, which is negligible)
@@ -155,11 +178,22 @@ def build_graph(depth_cam, color_cam, depth_res):
         nodes += [("ColorRP", "isaacsim.core.nodes.IsaacCreateRenderProduct"), ("Color", "isaacsim.ros2.bridge.ROS2CameraHelper")]
         values += [("ColorRP.inputs:cameraPrim", [Sdf.Path(color_cam)]),
                    ("ColorRP.inputs:width", COLOR_RES[0]), ("ColorRP.inputs:height", COLOR_RES[1]),
-                   ("Color.inputs:type", "rgb"), ("Color.inputs:topicName", "color/image_raw"),
-                   ("Color.inputs:nodeNamespace", NS), ("Color.inputs:frameId", COLOR_FRAME), ("Color.inputs:queueSize", 1)]
-        edges += [("Tick.outputs:tick", "ColorRP.inputs:execIn"), ("ColorRP.outputs:execOut", "Color.inputs:execIn"),
-                  ("ColorRP.outputs:renderProductPath", "Color.inputs:renderProductPath"),
-                  ("Context.outputs:context", "Color.inputs:context")]
+                   ]
+        # depth rendered from the colour camera itself = depth aligned to colour, pixel for pixel (what
+        # yolo_ros use_3d needs: RGB box -> depth at the same pixels -> X, Y, Z)
+        nodes += [("ColorInfo", "isaacsim.ros2.bridge.ROS2CameraInfoHelper"),
+                  ("AlignedDepth", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                  ("AlignedInfo", "isaacsim.ros2.bridge.ROS2CameraInfoHelper")]
+        values += [("Color.inputs:type", "rgb"), ("Color.inputs:topicName", "color/image_raw"),
+                   ("ColorInfo.inputs:topicName", "color/camera_info"),
+                   ("AlignedDepth.inputs:type", "depth"), ("AlignedDepth.inputs:topicName", "aligned_depth_to_color/image_raw"),
+                   ("AlignedInfo.inputs:topicName", "aligned_depth_to_color/camera_info")]
+        edges += [("Tick.outputs:tick", "ColorRP.inputs:execIn")]
+        for n in ("Color", "ColorInfo", "AlignedDepth", "AlignedInfo"):
+            values += [(f"{n}.inputs:nodeNamespace", NS), (f"{n}.inputs:frameId", COLOR_FRAME), (f"{n}.inputs:queueSize", 1)]
+            edges += [("ColorRP.outputs:execOut", f"{n}.inputs:execIn"),
+                      ("ColorRP.outputs:renderProductPath", f"{n}.inputs:renderProductPath"),
+                      ("Context.outputs:context", f"{n}.inputs:context")]
     og.Controller.edit({"graph_path": GRAPH, "evaluator_name": "execution"},
                        {keys.CREATE_NODES: nodes, keys.SET_VALUES: values, keys.CONNECT: edges})
 
@@ -171,9 +205,27 @@ def report_mount(stage, depth_cam):
     base_m = UsdGeom.Xformable(stage.GetPrimAtPath(PARENT_LINK)).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
     t = (cam_m * base_m.GetInverse()).ExtractTranslation()
     print(f"[d455] ROS camera_link (depth origin) in base_link: xyz=({t[0]:.4f}, {t[1]:.4f}, {t[2]:.4f}) m, "
-          f"rpy=(0, {math.radians(args.pitch_deg):.4f}, {math.radians(FORWARD_YAW_DEG):.4f}) rad")
+          f"rpy=({math.radians(args.roll_deg):.4f}, {math.radians(args.pitch_deg):.4f}, {math.radians(FORWARD_YAW_DEG):.4f}) rad")
     look = UsdGeom.Xformable(stage.GetPrimAtPath(depth_cam)).ComputeLocalToWorldTransform(0).TransformDir(Gf.Vec3d(0, 0, -1))
     print(f"[d455] depth camera looks along world ({look[0]:.2f}, {look[1]:.2f}, {look[2]:.2f})")
+
+
+def save_color_extrinsics(stage, color_cam):
+    """camera_link -> camera_color_optical_frame of the SIM colour camera -> config/sim_color_extrinsics.json.
+    ros2/d455.launch.py publishes it as a static TF when the real driver (which has its own) is not running."""
+    if not color_cam:
+        return
+    t0 = Usd.TimeCode.Default()
+    mount_m = UsdGeom.Xformable(stage.GetPrimAtPath(MOUNT)).ComputeLocalToWorldTransform(t0)
+    m = UsdGeom.Xformable(stage.GetPrimAtPath(color_cam)).ComputeLocalToWorldTransform(t0) * mount_m.GetInverse()
+    m = m.RemoveScaleShear()
+    r = m.ExtractRotationMatrix()                 # rows = USD camera x, y, z in camera_link (= mount axes)
+    opt = Gf.Matrix3d(*r.GetRow(0), *(-r.GetRow(1)), *(-r.GetRow(2)))   # optical: x right, y down, z forward
+    q = opt.ExtractRotation().GetQuat()
+    t = m.ExtractTranslation() - Gf.Vec3d(*DEPTH_ORIGIN_IN_LINK)     # ROS camera_link sits at the depth origin
+    ext = {"xyz": [round(v, 5) for v in t], "quat_xyzw": [round(v, 6) for v in (*q.GetImaginary(), q.GetReal())]}
+    (ROOT / "config" / "sim_color_extrinsics.json").write_text(json.dumps(ext, indent=2) + "\n")
+    print(f"[d455] camera_link -> {COLOR_FRAME}: {ext} -> config/sim_color_extrinsics.json")
 
 
 omni.usd.get_context().open_stage(args.src)
@@ -206,14 +258,27 @@ ensure_floor_and_light(stage)
 depth_cam, color_cam, depth_res = mount_camera(stage)
 build_graph(depth_cam, color_cam, depth_res)
 report_mount(stage, depth_cam)
+save_color_extrinsics(stage, color_cam)
 omni.usd.get_context().save_as_stage(args.out)
 print(f"[d455] saved {args.out}  (source file untouched: {args.src})")
 
 if args.run:
     import omni.timeline
 
+    if args.drop_egg or args.test_egg or args.twin:
+        script = ROOT / "isaac" / ("drop_egg.py" if args.drop_egg else "add_test_egg.py")
+        exec(compile(script.read_text(), str(script), "exec"), {"__file__": str(script)})
+    twin = None
+    if args.twin:
+        import sys
+        sys.path.insert(0, str(ROOT / "isaac"))
+        from egg_twin import EggTwin
+
+        twin = EggTwin(omni.usd.get_context().get_stage(), real_table_z=None if args.twin_real_z else args.twin_real_table)   # current stage (saved as --out)
     omni.timeline.get_timeline_interface().play()
     print(f"[d455] publishing on /{NS}/... - Ctrl+C or close the window to stop")
     while app.is_running():
+        if twin:
+            twin.update()
         app.update()
 app.close()

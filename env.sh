@@ -6,6 +6,8 @@ PATH="$(echo "$PATH" | tr ':' '\n' | grep -v -E '/(mini|ana)conda[^/]*/' | paste
 hash -r
 D455_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source /opt/ros/humble/setup.bash
+# yolo_ros (mgonzs13, tag 4.7.1) built in ~/ros2_ws - egg detection
+[ -f "$HOME/ros2_ws/install/setup.bash" ] && source "$HOME/ros2_ws/install/setup.bash"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE="$D455_ROOT/config/fastdds_shm.xml"   # needed for 90 Hz depth
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
