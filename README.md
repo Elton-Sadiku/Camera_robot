@@ -14,8 +14,12 @@ the camera. The same pipeline runs on the **real camera** and on a **simulated D
        yolo_node ──► tracking_node (ByteTrack) ──► detect_3d_node ──► debug_node
        (egg box)        (stable id)           (depth in the box → 3D, TF → base_link)   (image + RViz markers)
                                                 │  /yolo/detections_3d
-                                       ros2/egg_xyz.py  ─► prints X, Y, Z + distance, publishes /egg/point
+                                       ros2/egg_xyz.py  ─► prints X, Y, Z + distance, publishes /egg/point (best egg)
+                                                │            and /egg/points (all eggs)
+                                       isaac/egg_twin.py ─► Isaac Sim: one sim egg per real egg (digital twin)
 ```
+
+Start everything with one command (`scripts/start_all.sh`) or the **Meshari Egg Detection** desktop icon.
 
 Measured results (details in [Results](#results)): the egg is found in **96–100 %** of real frames the model never
 saw in training (score ≈ 0.95), 98 % of eggs in held-out Isaac Sim images, at **~18 Hz on the CPU**; the egg's
@@ -27,15 +31,17 @@ height comes out within **~1 cm** of the table geometry.
 1. [Files](#files)
 2. [Coordinate frames and camera mount](#coordinate-frames-and-camera-mount)
 3. [Installation (once)](#installation-once)
-4. [Running — real camera](#running--real-camera)
-5. [Running — Isaac Sim](#running--isaac-sim)
-6. [Topics and messages](#topics-and-messages)
-7. [How each part works](#how-each-part-works)
-8. [The egg model: data and training](#the-egg-model-data-and-training)
-9. [Measuring the camera tilt](#measuring-the-camera-tilt)
-10. [Results](#results)
-11. [Troubleshooting](#troubleshooting)
-12. [Known limits and next steps](#known-limits-and-next-steps)
+4. [Start everything with one command](#start-everything-with-one-command)
+5. [Running — real camera](#running--real-camera)
+6. [Running — Isaac Sim](#running--isaac-sim) (test egg, physics drop, digital twin)
+7. [Topics and messages](#topics-and-messages)
+8. [How each part works](#how-each-part-works)
+9. [The egg model: data and training](#the-egg-model-data-and-training) (incl. egg vs ping-pong ball)
+10. [Measuring the camera tilt](#measuring-the-camera-tilt)
+11. [Results](#results)
+12. [Demo video](#demo-video)
+13. [Troubleshooting](#troubleshooting)
+14. [Known limits and next steps](#known-limits-and-next-steps)
 
 ---
 
@@ -48,22 +54,22 @@ Camera_robot/
 ├── ros2/
 │   ├── d455.launch.py             real D455 driver (colour + aligned depth) + TFs + RViz
 │   ├── egg_yolo.launch.py         yolo_ros 3D egg detection, source:=real | sim
-│   └── egg_xyz.py                 prints the eggs' X, Y, Z + distance, 20 cm–1 m range + size check, /egg/point
+│   └── egg_xyz.py                 eggs' X, Y, Z + distance, 20 cm–1 m range + size check, /egg/point + /egg/points
 ├── isaac/
 │   ├── isaac_ros2.sh              starts Isaac Sim / its python with the internal ROS 2 bridge
 │   ├── meshari_d455.py            builds "Isaac SIm/meshari_d455.usd": D455 in the torso slot + ROS 2 graph
 │   ├── add_test_egg.py            test table (20 cm below / 20 cm ahead of the camera) + real-size brown egg
 │   ├── drop_egg.py                same table + egg, dropped with real physics (60 g, friction, bounce)
-│   └── egg_twin.py                digital twin: the sim egg follows the egg the REAL camera sees (/egg/point)
+│   └── egg_twin.py                digital twin: one sim egg per egg the REAL camera sees (/egg/points), up to 6
 ├── detection/
-│   ├── record_egg_yolo.py         guided recording of real colour + depth frames (18 placements)
-│   ├── label_egg_yolo.py          automatic egg boxes for those recordings → YOLO dataset
-│   ├── gen_egg_rgb.py             synthetic egg images from Isaac Sim (real-size eggs, real camera calibration)
+│   ├── record_egg_yolo.py         guided recording of real colour + depth frames (--set eggs | balls)
+│   ├── label_egg_yolo.py          automatic boxes for those recordings (class 0 egg, 1 ball) → YOLO dataset
+│   ├── gen_egg_rgb.py             synthetic images from Isaac Sim (real-size eggs, real calibration; --balls)
 │   ├── train_egg_yolo.py          YOLOv8s training on the GPU (Isaac Sim's CUDA torch)
 │   ├── yolo/egg_real_sim_yolov8s.pt   ★ the model in use (real + sim)
 │   ├── yolo/egg_yolov8s.pt            real-only model (start point for the real + sim training)
 │   ├── yolo/yolov8s-worldv2-egg.pt    zero-shot YOLO-World "egg" (used by the auto-labeller)
-│   └── data/                      recordings + datasets (git-ignored)
+│   └── data/                      recordings + datasets + egg_real_sim.yaml / egg_ball.yaml (git-ignored)
 ├── config/
 │   ├── d455_color_intrinsics.json real colour calibration (640×480, fx 385.7) — used by the sim colour camera
 │   ├── d455_intrinsics.json       real depth calibration (424×240, fx 217.2) — used by the sim depth camera
@@ -75,10 +81,12 @@ Camera_robot/
 ├── scripts/start_all.sh           one command for everything (real | twin | sim), Ctrl+C stops all
 ├── scripts/record_demo_video.py   demo video: detection image + egg X, Y, Z
 ├── Isaac SIm/meshari 1.usd        the robot (never modified);  meshari_d455.usd = robot + D455 (generated)
-└── Documentation/                 task description and earlier reports (PDF)
+└── Documentation/                 Meshari_D455_Egg_Detection.pdf (team report), egg_demo_live.mp4 (demo video),
+                                   team_photos/ (screenshots), task description and earlier reports
 ```
 
-Models (`*.pt`), recordings (`detection/data/`) and the `.usd` scenes are **git-ignored** (too large for GitHub):
+Models (`*.pt`), recordings (`detection/data/`), training runs (`detection/yolo/runs/`) and the `.usd` scenes are
+**git-ignored** (too large for GitHub):
 back them up separately. `meshari_d455.usd` can always be rebuilt with `isaac/meshari_d455.py`.
 
 ---
@@ -102,6 +110,9 @@ values as defaults — **keep all three equal**. Any value can be overridden whe
 `ros2 launch ros2/d455.launch.py mount_pitch:=0.1169 mount_roll:=-0.0105` (radians).
 
 The pitch is **measured**, not guessed — see [Measuring the camera tilt](#measuring-the-camera-tilt).
+**Current state:** the camera is on the desk test rig, straightened, measured **6.7° down, roll −0.6°**, 16.1 cm
+above the table; `scripts/start_all.sh` passes these (`mount_pitch:=0.1169 mount_roll:=-0.0105`). `MOUNT_RPY`
+(11.55°) is the earlier rig measurement and the robot/sim default — set both to the value measured on the robot.
 With the table 20 cm below and its near edge 20 cm in front of the camera, a tilt of ≥ 10° shows the whole table:
 an egg is visible from the table edge (≈ 27 cm from the camera, the closest possible on that table) to beyond 1 m.
 
@@ -136,8 +147,9 @@ scripts/start_all.sh            # real D455 + yolo egg detection + egg X, Y, Z +
 scripts/start_all.sh real       # real camera only (with RViz)
 scripts/start_all.sh sim        # Isaac Sim only (its D455 + test egg, yolo on /sim)
 ```
-Or double-click **Meshari Egg Detection** on the Desktop (also in the app menu). The terminal window shows the eggs'
-positions; **close it (or Ctrl+C) to stop everything**. Logs: `/tmp/meshari_egg/*.log`. The desk-test-rig values
+Or double-click **Meshari Egg Detection** on the Desktop (also in the app menu; the first time: right-click →
+*Allow Launching*). The terminal window shows the eggs' positions; **close it (or Ctrl+C) to stop everything**.
+The default mode starts: real D455 (no RViz), yolo, `egg_xyz.py`, the image window and Isaac Sim with the egg twin. Logs: `/tmp/meshari_egg/*.log`. The desk-test-rig values
 (`MOUNT_ARGS`, `TWIN_ARGS`) are at the top of the script; on the robot set `MOUNT_ARGS=""` and
 `TWIN_ARGS="--twin-real-z"`.
 
@@ -165,8 +177,16 @@ ros2 launch ros2/d455.launch.py camera:=false                            # TFs +
 ros2 launch ros2/egg_yolo.launch.py source:=sim                          # -> /sim/yolo/...
 python3 ros2/egg_xyz.py --ros-args -r __ns:=/sim -p detections:=/sim/yolo/detections_3d
 ```
-Move the egg in Isaac Sim (`/World/TestEgg`, gizmo) and watch the numbers follow. With `--drop-egg` instead of
-`--test-egg` the egg falls onto the table with real physics and the detector picks it up once it lands. Or open the GUI with
+Move the egg in Isaac Sim (`/World/TestEgg`, gizmo) and watch the numbers follow. Options of `meshari_d455.py --run`:
+
+| Option | Scene |
+|---|---|
+| `--test-egg` | test table + one egg lying still |
+| `--drop-egg` | the egg falls onto the table with real physics; the detector picks it up once it lands |
+| `--twin` | **digital twin**: one sim egg per egg the REAL camera sees (needs the real pipeline running) |
+| `--twin-real-table 1.028` | twin height: z of the real table in `base_link` (desk rig: 1.028 m) |
+| `--twin-real-z` | twin uses the real Z as is (camera on the robot, real table = sim table) |
+ Or open the GUI with
 `isaac/isaac_ros2.sh`, load `Isaac SIm/meshari_d455.usd`, press Play, and run `isaac/add_test_egg.py` from
 Window → Script Editor. **Always start Isaac Sim through `isaac/isaac_ros2.sh`** (it sets the ROS 2 bridge up).
 Real and sim can run at the same time (different namespaces); then skip `camera:=false` — the real launch already
@@ -193,8 +213,9 @@ isaac/isaac_ros2.sh isaac/meshari_d455.py --headless          # --pitch-deg 11.5
 | `/yolo/dbg_image` | sensor_msgs/Image | colour image with boxes and scores |
 | `/yolo/dgb_bb_markers` | visualization_msgs/MarkerArray | 3D egg boxes in RViz |
 | `/egg/point` | geometry_msgs/PointStamped | best egg (from `egg_xyz.py`), for the arm controller |
+| `/egg/points` | geometry_msgs/PoseArray | all accepted eggs (empty = none), used by the Isaac Sim twin |
 
-`yolo_msgs/Detection`: `class_name` ("egg"), `score`, `id`, `bbox` (2D), `bbox3d` (`center` Pose, `size`, `frame_id`).
+`yolo_msgs/Detection`: `class_name` ("egg"; "ball" with the egg-vs-ball model), `score`, `id`, `bbox` (2D), `bbox3d` (`center` Pose, `size`, `frame_id`).
 
 ---
 
@@ -227,7 +248,8 @@ Options: `threshold:=…`, `device:=cuda:0` (needs a CUDA torch in ROS's Python)
 Subscribes to `detections_3d`. For each egg it looks up `camera_link` in TF and computes the straight-line
 distance. It keeps only eggs **20 cm – 1 m** from the camera (`min_distance_m`, `max_distance_m`) whose measured
 size is egg-like, **2–10 cm** (`min_size_m`, `max_size_m`; an egg is 44 × 57 mm); this rejects e.g. a hand box.
-It logs X, Y, Z + distance and publishes the highest-score egg on `egg/point`.
+Only `class_name == "egg"` counts, so a box classed "ball" is never sent to the arm. It logs X, Y, Z + distance,
+publishes the highest-score egg on `egg/point` and all accepted eggs on `egg/points` (PoseArray).
 Parameters: `detections`, `camera_frame`, the four limits above.
 
 ### `isaac/meshari_d455.py`
@@ -240,7 +262,8 @@ Opens `Isaac SIm/meshari 1.usd` (unchanged) and saves `meshari_d455.usd` with:
 * an OmniGraph (`/World/D455_ROS2`) that on Play publishes depth, point cloud, colour, colour info and
   **depth rendered by the colour camera = aligned depth**, under `/sim/camera/camera/...` with the real frame ids;
 * floor + dome light if missing; writes `config/sim_color_extrinsics.json` (camera_link → colour camera).
-Options: `--run` (publish after building), `--headless`, `--test-egg`, `--ns`, `--out`, `--pitch-deg`, `--roll-deg`.
+Options: `--run` (publish after building), `--headless`, `--test-egg`, `--drop-egg`, `--twin`, `--twin-real-table`,
+`--twin-real-z`, `--ns`, `--out`, `--pitch-deg`, `--roll-deg`.
 
 ### `isaac/add_test_egg.py`
 Adds a table (top 20 cm below the camera, near edge 20 cm ahead of it, dark material) and a **57 × 44 mm** brown
@@ -300,6 +323,34 @@ because the real set is small.
 To improve it: record another session where the robot will work (`record_egg_yolo.py`; new session numbers are
 added automatically), label it, and retrain with both yaml train lists.
 
+### Egg vs ping-pong ball (in progress)
+
+**Problem found live:** the model in use (one class, "egg") boxed an **orange ping-pong ball on its holder as an
+egg, score 0.943**. It never saw egg-sized balls: the real data had none and the sim generator deliberately kept
+balls away from egg size. **Fix: a second class, `ball`**, so the model has to decide egg *or* ball.
+
+| Data | What | Count |
+|---|---|---|
+| Real eggs (session 0) | `record_egg_yolo.py`, labelled class 0 | 680 frames |
+| Real balls (session 1) | `record_egg_yolo.py --set balls` (ball on its holder / mat / notebook, near & far, **no egg**); the old model's false "egg" boxes become the class-1 "ball" labels (`label_egg_yolo.py --detector`) | 320 labelled frames, 8 placements (1:5 ball out of view, 1:7 skipped) |
+| Isaac Sim eggs | `gen_egg_rgb.py` (as above) | 3,000 images |
+| Isaac Sim eggs + balls | `gen_egg_rgb.py --balls`: ping-pong / golf balls 38–45 mm, orange / white / yellow / egg-brown, 40 % on a small holder, labelled class 1 | 3,000 images, 4,017 eggs, 3,798 balls |
+
+Relabel and train (dataset list: `detection/data/egg_ball.yaml`, classes `0: egg`, `1: ball`):
+```bash
+python3 detection/label_egg_yolo.py --egg 0:15,0:16,0:17 --skip 0:13,1:7
+PYTHONPATH=~/egg_train_pkgs ~/isaacsim/python.sh detection/train_egg_yolo.py \
+    --data detection/data/egg_ball.yaml --base detection/yolo/egg_real_sim_yolov8s.pt --name egg_ball --epochs 35
+```
+**Status: training paused after 5 of 35 epochs** (~170 s per epoch on 6,279 images, ~1.5 h left); after 2 epochs
+the real validation mAP50 was already 0.977. Resume from the saved checkpoint:
+```bash
+PYTHONPATH=~/egg_train_pkgs ~/isaacsim/python.sh -c "from ultralytics import YOLO; YOLO('detection/yolo/runs/egg_ball/weights/last.pt').train(resume=True)"
+```
+Then copy `detection/yolo/runs/egg_ball/weights/best.pt` to `detection/yolo/egg_ball_yolov8s.pt`, test it on the
+ball recordings, and set it as the `model` default in `ros2/egg_yolo.launch.py`. **Until then, keep ping-pong balls
+out of the camera's view** (the twin would show the ball as an egg).
+
 ---
 
 ## Measuring the camera tilt
@@ -311,6 +362,9 @@ values the table comes out flat in `base_link` (checked: left / right / near / f
 Measured so far: desk test rig 11.55° / roll 3.25° (16 cm above the table), after straightening 6.7° / roll −0.6°.
 **Re-measure every time the camera is moved**, then set `MOUNT_RPY` (and rebuild the sim) or pass
 `mount_pitch:=… mount_roll:=…` to `d455.launch.py`.
+**Note:** these measurements were done with ad-hoc code during development; there is **no measuring script in the
+repository yet** (planned: `scripts/measure_mount.py`, egg off the table → prints pitch, roll, height and the launch
+arguments).
 
 ---
 
@@ -328,6 +382,17 @@ in Isaac Sim the egg is placed within 1.3 cm of its true centre.
 
 ---
 
+## Demo video
+
+`Documentation/egg_demo_live.mp4` (40 s, H.264): the live yolo image with the egg box plus a bar under it with score,
+distance and X, Y, Z, while the egg is moved from 19.7 to 69.8 cm, left / right and held in a hand. Record a new one
+(pipeline running; `--ns /sim` for Isaac Sim):
+```bash
+python3 scripts/record_demo_video.py --seconds 40 --out Documentation/egg_demo_live.mp4
+```
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -340,6 +405,10 @@ in Isaac Sim the egg is placed within 1.3 cm of its true centre.
 | `operator torchvision::nms does not exist` | torchvision is a CUDA build: reinstall the `+cpu` one (install script) |
 | training crashes at the end in a plot (`UnboundLocalError`) | already off (`plots=False`); copy `runs/<name>/weights/best.pt` if it ever happens |
 | only some frames detected, score near the threshold | zero-shot model in use, or a new place / light: record + retrain |
+| a ping-pong ball / round orange object detected as an egg | current 1-class model; finish the egg-vs-ball training (above) |
+| twin egg floats a few cm above the sim table | real table height off: set `--twin-real-table` (lying real egg Z − 0.022) |
+| twin egg does not rise when lifted | started with an old version, or `--twin-real-z` mixed up: use `--twin-real-table` |
+| desktop icon does nothing | right-click → *Allow Launching*; logs in `/tmp/meshari_egg/` |
 
 ---
 
@@ -349,5 +418,7 @@ in Isaac Sim the egg is placed within 1.3 cm of its true centre.
   along the viewing direction — check against a ruler and correct before grasping.
 * Real training data is one brown egg in one room; white eggs and the robot's own table are covered only by the
   sim images — record one session on the robot (and with a white egg) and retrain.
-* When the camera is mounted in the robot, measure the tilt there and update `MOUNT_RPY`.
+* **Egg vs ball:** the model in use can call a ping-pong ball an egg; the 2-class training is paused (see above).
+* When the camera is mounted in the robot, measure the tilt there and update `MOUNT_RPY`, set `MOUNT_ARGS=""` and
+  `TWIN_ARGS="--twin-real-z"` in `scripts/start_all.sh`; a measuring script is still to be written.
 * GPU inference in ROS needs a CUDA torch for Python 3.10 (CPU gives ~18 Hz, enough for grasping).
