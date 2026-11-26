@@ -47,8 +47,8 @@ FULL = intrinsics(decimation=1)   # full-res fx drives the stereo error model
 POLICY = intrinsics()             # what we render: 424x240 / DECIMATION (424x240 for DECIMATION=1)
 
 # Mount of camera_link on the robot link (metres / radians), from shared.d455_model = ros2/d455.launch.py.
-MOUNT_POS = MOUNT_XYZ             # (0.05, 0.0, 1.20) - example values, real mount not measured yet
-# MOUNT_RPY = (0.0, 0.40, 0.0): looking along robot +x, tilted 23 deg down (positive pitch = tilt down)
+MOUNT_POS = MOUNT_XYZ             # (0.1781, -0.043, 1.153) - torso camera slot of the meshari robot (from CAD)
+# MOUNT_RPY = (0.0, 0.087, -1.5708): 5 deg down, looking along base_link -Y (this robot's forward); positive pitch = tilt down
 
 
 def d455_camera_cfg(prim_path: str, pos=MOUNT_POS, rpy=MOUNT_RPY, update_period: float = 0.0) -> TiledCameraCfg:

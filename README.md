@@ -37,7 +37,7 @@ A stereo camera's closest distance is `fx × baseline / (126 + disparity_shift)`
 | **424×240** (default) | **0.16 m → 6 m** (cut at 1.5 m by `FAR_LIMIT_M`) | ~63k | hands + workspace |
 | 424×240 + `disparity_shift:=50` | **0.11 m → 0.41 m** (nothing further!) | close objects only | very close grasping |
 
-Everything is set in `shared/d455_model.py` (`DEPTH_PROFILE`, `DISPARITY_SHIFT`), which the class, the ROS node, the policy node and Isaac Lab all read. Try a shift without editing the file: `ros2 launch ros2/d455.launch.py disparity_shift:=50`. After changing the resolution, re-save the calibration. Points beyond `FAR_LIMIT_M = 1.5` m (depth along the camera axis) are dropped. With the example mount (camera 1.2 m up and 23° down; **not measured yet**), only a thin strip of floor (about 1.0–1.2 m in front of the robot) is within range; a table and the objects on it show fully. The policy sees the full 424×240 image (`DECIMATION = 1`); set 2 for 212×120 and faster training. Even closer than 0.11 m needs a close-range camera such as the D405 (7–50 cm).
+Everything is set in `shared/d455_model.py` (`DEPTH_PROFILE`, `DISPARITY_SHIFT`), which the class, the ROS node, the policy node and Isaac Lab all read. Try a shift without editing the file: `ros2 launch ros2/d455.launch.py disparity_shift:=50`. After changing the resolution, re-save the calibration. Points beyond `FAR_LIMIT_M = 1.5` m (depth along the camera axis) are dropped. With the mount from the robot CAD (camera in the torso slot, 1.15 m up, tilted 5° down), the view spans from 24.5° above to 34.5° below horizontal: a 0.75 m table top is visible from ~0.58 m ahead, and the floor from ~1.7 m. The tilt is set in `MOUNT_RPY` (pitch); rebuild the sim file with `isaac/meshari_d455.py --pitch-deg <deg>` to match. The policy sees the full 424×240 image (`DECIMATION = 1`); set 2 for 212×120 and faster training. Even closer than 0.11 m needs a close-range camera such as the D405 (7–50 cm).
 
 ### Measured on your D455 (FW 5.17.3.10, USB 3.2, Ryzen AI 7 350)
 | Mode | FPS | Dropped | Deproject | Capture → points |
@@ -80,7 +80,7 @@ Only one process can own the camera at a time: your V4L2 `./d455`, this class, `
 | `camera_depth_optical_frame` (optical, REP-103) | **x right, y down, z forward** | all depth/cloud data (real and sim) |
 | USD camera prim (OpenGL) | −z forward, +y up | Isaac Sim internally |
 
-Isaac Lab handles the conversion with `OffsetCfg(convention="ros")`, which takes the quaternion **of the optical frame**. `shared.d455_model.mount_quat_ros(roll, pitch, yaw)` builds it from the same `camera_link` rpy that goes into the ROS static TF, composed with the fixed link→optical rotation (rpy −90°, 0, −90°). The mount lives in ONE place, `MOUNT_XYZ` / `MOUNT_RPY` in `shared/d455_model.py` (now **example values, not measured yet**: 0.05, 0, 1.20 m, pitch 0.40 rad = 23° down). The launch file, `isaac/d455_cfg.py` and `isaac/sim_publish_d455.py` all read it.
+Isaac Lab handles the conversion with `OffsetCfg(convention="ros")`, which takes the quaternion **of the optical frame**. `shared.d455_model.mount_quat_ros(roll, pitch, yaw)` builds it from the same `camera_link` rpy that goes into the ROS static TF, composed with the fixed link→optical rotation (rpy −90°, 0, −90°). The mount lives in ONE place, `MOUNT_XYZ` / `MOUNT_RPY` in `shared/d455_model.py` (now taken from the meshari robot CAD: the D455 in the torso slot, `camera_link` = depth origin at (0.1781, −0.043, 1.153) m, 5° down, yaw −90° because this robot's `base_link` faces −Y; `isaac/meshari_d455.py` mounts it in Isaac Sim and publishes the same topics). The launch file, `isaac/d455_cfg.py` and `isaac/sim_publish_d455.py` all read it.
 
 ### 1. ROS 2 node
 ```bash
@@ -140,3 +140,28 @@ source /opt/ros/humble/setup.bash && ros2 launch ros2/d455.launch.py            
 - Isaac Sim 5.1 runs Python 3.11, so it **cannot** load system Humble's Python 3.10 rclpy. The bridge ships its own Humble libs at `/path/to/isaacsim/exts/isaacsim.ros2.bridge/humble/lib`. Set `ROS_DISTRO=humble`, `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and `FASTRTPS_DEFAULT_PROFILES_FILE`, and keep the same `ROS_DOMAIN_ID` in every terminal. Replace `/path/to/isaacsim` with the actual Isaac Sim installation directory. When stopping a headless run, make sure the `python` child process has exited too: killing `isaaclab.sh` alone can leave it publishing.
 - Sim depth is `32FC1` in metres. Real depth is `16UC1` in millimetres. `policy_node.py` handles both.
 - Rendering 848×480 at 90 Hz for thousands of envs is not needed. The policy rate (e.g. 30–50 Hz) only has to see the *latest* frame on the real robot, which is what keep-last-1 QoS gives you.
+
+## Part 3: meshari robot — sim D455, real D455 side by side, egg detection (depth)
+
+### Sim camera in the robot
+`isaac/meshari_d455.py` opens `Isaac SIm/meshari 1.usd` (left unchanged), puts the D455 in the torso camera slot (5° down, real intrinsics, depth origin = left imager) and saves `Isaac SIm/meshari_d455.usd`. Open that in Isaac Sim and press Play. **Start Isaac Sim with `isaac/isaac_ros2.sh`** (sets `ROS_DISTRO` and the bridge libs). Do not rebuild the file while it is open in Isaac Sim.
+
+| | Real D455 (`ros2/d455.launch.py`) | Sim D455 (`meshari_d455.usd`) |
+|---|---|---|
+| Depth | `/camera/camera/depth/image_rect_raw` 16UC1 mm | `/sim/camera/camera/depth/image_rect_raw` 32FC1 m |
+| Info / cloud | `/camera/camera/depth/{camera_info,color/points}` | `/sim/camera/camera/depth/{camera_info,color/points}` |
+| Frame | `camera_depth_optical_frame` | `camera_depth_optical_frame` |
+
+Both can run at the same time. `--ns camera/camera` puts the sim on the real topic names instead (then run only one).
+
+### Egg detector (depth only)
+```bash
+isaac/isaac_ros2.sh detection/gen_egg_depth.py --frames 6000     # synthetic depth + egg boxes from the sim D455
+~/isaacsim/python.sh detection/train_egg_detector.py              # GPU training -> detection/models/egg_detector.ts.pt
+```
+Training adds fresh D455 noise (`shared.d455_model.stereo_noise`) to every batch and feeds `to_obs()/Z_RANGE[1]`, exactly what `real_obs()` gives from the real camera. Run the detector (system Python, CPU, ~23 ms/frame):
+```bash
+python3 ros2/egg_detector_node.py                                                                      # real D455
+python3 ros2/egg_detector_node.py --ros-args -r __ns:=/sim -p depth_topic:=/sim/camera/camera/depth/image_rect_raw   # sim
+```
+Outputs `egg/point` (PointStamped, egg centre in the depth optical frame), `egg/detection` ([score, x0, y0, x1, y1, X, Y, Z]) and `egg/debug_image`.

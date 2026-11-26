@@ -1,4 +1,4 @@
-"""ros2 launch ros2/d455.launch.py [mount_x:=0.05 mount_z:=1.20 mount_pitch:=0.40 base_frame:=base_link rviz:=false disparity_shift:=50]
+"""ros2 launch ros2/d455.launch.py [mount_pitch:=0.35 base_frame:=base_link rviz:=false camera:=false disparity_shift:=50]
 
 Starts the D455 node + the two static TFs:
   base_frame -> camera_link                (mount defaults from shared.d455_model MOUNT_XYZ/MOUNT_RPY, same as Isaac)
@@ -22,7 +22,7 @@ MOUNT = {f"mount_{k}": str(v) for k, v in zip(("x", "y", "z", "roll", "pitch", "
 
 def generate_launch_description():
     args = [DeclareLaunchArgument(k, default_value=v)
-            for k, v in {**MOUNT, "base_frame": "base_link", "rviz": "true",
+            for k, v in {**MOUNT, "base_frame": "base_link", "rviz": "true", "camera": "true",
                               "disparity_shift": str(DISPARITY_SHIFT)}.items()]
     tf = lambda a, parent, child: Node(package="tf2_ros", executable="static_transform_publisher",  # noqa: E731
                                        arguments=[*a, "--frame-id", parent, "--child-frame-id", child])
@@ -32,8 +32,10 @@ def generate_launch_description():
            L("base_frame"), "camera_link"),
         tf(["--roll", "-1.5707963", "--pitch", "0", "--yaw", "-1.5707963"],
            "camera_link", "camera_depth_optical_frame"),
+        # camera:=false -> only TFs + RViz (e.g. to view the Isaac Sim D455 on /sim/... without the real camera)
         ExecuteProcess(cmd=["python3", str(HERE / "d455_node.py"), "--ros-args",
-                             "-p", ["disparity_shift:=", L("disparity_shift")]], output="screen"),
+                             "-p", ["disparity_shift:=", L("disparity_shift")]], output="screen",
+                       condition=IfCondition(L("camera"))),
         # base_link fixed frame, D455 cloud (Best Effort QoS, colored by forward distance X), TF axes
         Node(package="rviz2", executable="rviz2", arguments=["-d", str(HERE.parent / "config" / "d455.rviz")],
              condition=IfCondition(L("rviz"))),

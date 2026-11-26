@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pt
 test1
+detection/data/
+# Isaac Sim scenes: meshari 1.usd / meshari_d455.usd are ~273 MB (over GitHub's 100 MB limit); rebuild meshari_d455.usd with isaac/meshari_d455.py
+Isaac SIm/*.usd
+Isaac SIm/what_camera_sees_now.png
