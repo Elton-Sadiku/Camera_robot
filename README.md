@@ -444,6 +444,22 @@ HF_HUB_OFFLINE=1 ~/isaacsim/python.sh free_detector/train_dfine.py --epochs 12  
 ```
 Details, license table and setup: `free_detector/README.md`. *Not legal advice — check before a product release.*
 
+### Libraries and licenses
+
+| Library | Version | Used for | Where | License |
+|---|---|---|---|---|
+| ROS 2 Humble (rclpy, tf2, cv_bridge, message_filters) | Humble | messages, transforms, images, time sync | robot | Apache-2.0 / BSD |
+| librealsense + realsense2_camera (pyrealsense2) | 2.59.2 | D455 driver: colour, aligned depth, point cloud | robot | Apache-2.0 |
+| yolo_ros + yolo_msgs | 4.7.1 | YOLO detection, ByteTrack, 3D from depth | robot (YOLO path) | GPL-3.0 |
+| ultralytics | 8.4.220 | YOLO inference + training | robot (YOLO path), PC | AGPL-3.0 |
+| PyTorch, torchvision | CPU build (ROS), CUDA 2.7 (Isaac Sim) | inference + training | robot (YOLO path), PC | BSD-3 |
+| onnxruntime | 1.20.1 | D-FINE inference on the CPU | robot (free path) | MIT |
+| D-FINE-S weights `ustc-community/dfine-small-coco` | — | start model of the free detector | PC (training) | Apache-2.0 |
+| Hugging Face transformers | 4.57 | D-FINE training + ONNX export | PC | Apache-2.0 |
+| OpenCV, numpy | 4.11, 1.26 | images, 3D math, video | robot, PC | Apache-2.0 / BSD |
+| Label Studio | 1.23.2 | labelling egg / ball boxes | PC | Apache-2.0 |
+| NVIDIA Isaac Sim | 5.1 | simulation, digital twin, synthetic images | PC | NVIDIA license |
+
 ---
 
 ## Measuring the camera tilt
