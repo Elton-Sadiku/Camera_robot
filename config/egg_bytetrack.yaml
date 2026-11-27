@@ -1,10 +1,13 @@
-# ByteTrack for the egg (ros2/egg_yolo.launch.py). The ultralytics default (bytetrack.yaml) only keeps boxes
-# scoring >= 0.25, but YOLO-World's "egg" scores lower (real 0.15-0.85, Isaac Sim render ~0.013), so the
-# egg would never reach detections_3d. Filtering by score is done by yolo_node's threshold instead.
+# ByteTrack for egg / ball (ros2/egg_yolo.launch.py). Hysteresis against blinking boxes:
+#   yolo_node passes boxes down to score 0.2 (threshold in egg_yolo.launch.py), and the tracker
+#   - STARTS a new object only at score >= new_track_thresh (0.5): weak guesses never appear,
+#   - KEEPS an object it already follows while its score stays >= track_low_thresh (0.2): a frame where the egg dips
+#     to 0.4 does not make its box vanish (before: one threshold of 0.5 -> the egg at ~0.58 blinked ~1 frame in 10).
+# The 3D node, the debug image and egg_xyz.py all use the tracker's output.
 tracker_type: bytetrack
-track_high_thresh: 0.01   # first-stage match
-track_low_thresh: 0.005   # second-stage (low-score) match
-new_track_thresh: 0.01    # start a new track
-track_buffer: 30          # frames a lost egg track is kept
+track_high_thresh: 0.5    # first-stage match (confident boxes)
+track_low_thresh: 0.2     # second-stage match: weaker boxes can still continue an existing track
+new_track_thresh: 0.5     # start a new track
+track_buffer: 30          # frames a lost track is kept (re-found with the same id)
 match_thresh: 0.8
-fuse_score: False         # True multiplies IoU by the score: a 0.013 egg would never match its own track
+fuse_score: False

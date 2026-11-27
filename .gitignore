@@ -5,3 +5,6 @@ detection/data/
 # Isaac Sim scenes are ~273 MB (over GitHub's 100 MB limit); rebuild meshari_d455.usd with isaac/meshari_d455.py
 Isaac SIm/*.usd
 detection/yolo/runs/
+free_detector/models/
+record/*.jpg
+labalestudio yolo files /

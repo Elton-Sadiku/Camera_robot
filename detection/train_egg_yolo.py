@@ -27,7 +27,7 @@ res = model.train(data=args.data, epochs=args.epochs, imgsz=640, batch=args.batc
                   project=str(ROOT / "detection" / "yolo" / "runs"), name=args.name, exist_ok=True,
                   # few placements -> lean on augmentation: colour, scale, flips, mosaic, a little rotation
                   hsv_h=0.02, hsv_s=0.6, hsv_v=0.5, degrees=10, scale=0.6, fliplr=0.5, mosaic=1.0, mixup=0.1,
-                  patience=30, plots=False, verbose=False)   # plots=True crashes in 8.4.6 (UnboundLocalError)
+                  patience=30, plots=False, verbose=False)   # plots=True crashed in 8.4.6 (UnboundLocalError)
 best = Path(res.save_dir) / "weights" / "best.pt"
 out = ROOT / "detection" / "yolo" / f"{args.name}_yolov8s.pt"
 shutil.copy2(best, out)

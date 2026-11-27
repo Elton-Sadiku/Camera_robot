@@ -4,7 +4,9 @@
   ros2 launch ros2/egg_yolo.launch.py source:=sim       # Isaac Sim D455 (meshari_d455.usd playing)
   options: threshold:=auto|0.2  device:=cpu|cuda:0  model:=<.pt>  model_type:=World|YOLO|YOLOE  target_frame:=base_link
 
-Model: detection/yolo/egg_real_sim_yolov8s.pt = YOLOv8s trained on real D455 egg images (detection/record_egg_yolo.py,
+Model: detection/yolo/egg_ball_ls_yolov8s.pt = YOLOv8s with 2 classes, egg (0) and ball (1), trained on real D455 egg
+and ping-pong-ball images (incl. hand-labelled Label Studio frames, detection/import_label_studio.py). Earlier 1-class
+model: detection/yolo/egg_real_sim_yolov8s.pt = YOLOv8s trained on real D455 egg images (detection/record_egg_yolo.py,
 label_egg_yolo.py, train_egg_yolo.py; + Isaac Sim images from gen_egg_rgb.py). Scores ~0.97 on unseen real frames.
 The zero-shot fallback: model:=detection/yolo/yolov8s-worldv2-egg.pt model_type:=World threshold:=0.015.
 
@@ -27,9 +29,9 @@ from launch.substitutions import LaunchConfiguration as L
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = {  # colour image, depth aligned to it, its camera_info, depth units per metre, yolo namespace, threshold
     "real": ("/camera/camera/color/image_raw", "/camera/camera/aligned_depth_to_color/image_raw",
-             "/camera/camera/aligned_depth_to_color/camera_info", "1000", "yolo", "0.5"),      # 16UC1 millimetres
+             "/camera/camera/aligned_depth_to_color/camera_info", "1000", "yolo", "0.2"),      # 16UC1 millimetres
     "sim": ("/sim/camera/camera/color/image_raw", "/sim/camera/camera/aligned_depth_to_color/image_raw",
-            "/sim/camera/camera/aligned_depth_to_color/camera_info", "1", "sim/yolo", "0.5"),  # 32FC1 metres
+            "/sim/camera/camera/aligned_depth_to_color/camera_info", "1", "sim/yolo", "0.2"),  # 32FC1 metres
 }
 # (0.5 for the trained egg model. Old notes, zero-shot yolov8s-worldv2 + "egg"): a real brown egg scores 0.02 (standing upright) to 0.85,
 # the rendered sim egg only ~0.013 (clean CG looks less like the web photos it learned from); other objects in
@@ -58,10 +60,10 @@ def yolo(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("source", default_value="real", description="real or sim"),
-        DeclareLaunchArgument("model", default_value=str(ROOT / "detection" / "yolo" / "egg_real_sim_yolov8s.pt")),
+        DeclareLaunchArgument("model", default_value=str(ROOT / "detection" / "yolo" / "egg_ball_ls_yolov8s.pt")),
         DeclareLaunchArgument("model_type", default_value="YOLO"),
         DeclareLaunchArgument("device", default_value="cpu", description="cpu (ROS python has CPU torch) or cuda:0"),
-        DeclareLaunchArgument("threshold", default_value="auto", description="auto = 0.5 (trained egg model)"),
+        DeclareLaunchArgument("threshold", default_value="auto", description="auto = 0.2: boxes for the tracker, which starts objects only at >= 0.5 (config/egg_bytetrack.yaml)"),
         DeclareLaunchArgument("target_frame", default_value="base_link"),
         OpaqueFunction(function=yolo),
     ])

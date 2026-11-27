@@ -2,7 +2,7 @@
 # One-time setup for this project on Ubuntu 22.04 (safe to re-run).
 #   ROS 2 Humble (desktop: rclpy, rviz2, tf2) + realsense2_camera
 #   RealSense udev rule (camera access without root)
-#   egg detection: CPU torch + ultralytics 8.4.6 for the system Python 3.10 that ROS uses,
+#   egg detection: CPU torch + ultralytics 8.4.220 for the system Python 3.10 that ROS uses,
 #   yolo_ros (mgonzs13, tag 4.7.1) built in ~/ros2_ws
 # Usage: bash scripts/install_ubuntu.sh
 set -euo pipefail
@@ -35,7 +35,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 echo "== 4/5 Python packages for system Python 3.10 (user site, no sudo)"
 # numpy must stay 1.x (ROS Humble); packaging>=24.2 is needed by the newer setuptools that builds yolo_ros
 $PY -m pip install --user torch "torchvision==0.29.*" --index-url https://download.pytorch.org/whl/cpu
-$PY -m pip install --user "ultralytics==8.4.6" "lap>=0.5.12" "numpy<2" "packaging>=24.2" ftfy regex tqdm
+$PY -m pip install --user "ultralytics==8.4.220" "lap>=0.5.12" "numpy<2" "packaging>=24.2" ftfy regex tqdm
 # ultralytics may replace torchvision with a CUDA build -> put the matching CPU build back
 $PY -m pip install --user --no-deps --force-reinstall "torchvision==0.29.*" --index-url https://download.pytorch.org/whl/cpu
 

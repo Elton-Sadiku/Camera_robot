@@ -14,6 +14,31 @@ MODE="${1:-twin}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOUNT_ARGS="mount_pitch:=0.1169 mount_roll:=-0.0105"      # desk rig: measured 6.7 deg down, -0.6 deg roll
 TWIN_ARGS="--twin-real-table 1.028"                         # desk rig: real table height in base_link
+# other model: MODEL=detection/yolo/egg_ball_ls2_yolov8s.pt scripts/start_all.sh real
+# license-free detector (D-FINE + onnxruntime, no ultralytics / yolo_ros): DETECTOR=free scripts/start_all.sh real
+#   (MODEL=<model.onnx> picks another free model)
+DETECTOR="${DETECTOR:-yolo}"
+MODEL_ARG=""
+if [ -n "${MODEL:-}" ]; then
+    [ "$DETECTOR" = free ] && MODEL_ARG="-p model:=$(realpath "${MODEL}")" || MODEL_ARG="model:=$(realpath "${MODEL}")"
+fi
+detector() {  # detector real|sim: egg detection + egg X, Y, Z (egg/point, egg/points) + image window
+    if [ "$DETECTOR" = free ]; then
+        ros egg_xyz "python3 free_detector/egg_detect_node.py --ros-args -p source:=$1 $MODEL_ARG"
+        IMG=/free/dbg_image
+    elif [ "$1" = real ]; then
+        ros yolo "ros2 launch ros2/egg_yolo.launch.py $MODEL_ARG"
+        ros egg_xyz "python3 ros2/egg_xyz.py"
+        IMG=/yolo/dbg_image
+    else
+        ros yolo "ros2 launch ros2/egg_yolo.launch.py source:=sim $MODEL_ARG"
+        ros egg_xyz "python3 ros2/egg_xyz.py --ros-args -r __ns:=/sim -p detections:=/sim/yolo/detections_3d"
+        IMG=/sim/yolo/dbg_image
+    fi
+    [ "$1" = sim ] && [ "$DETECTOR" = free ] && IMG=/sim/free/dbg_image
+    sleep 4
+    ros image "ros2 run rqt_image_view rqt_image_view $IMG"
+}
 LOG=/tmp/meshari_egg
 mkdir -p "$LOG"
 PIDS=()
@@ -36,16 +61,13 @@ stop_all() {
 }
 trap stop_all EXIT INT TERM HUP
 
-echo "== meshari egg detection: mode '$MODE'"
+echo "== meshari egg detection: mode '$MODE', detector '$DETECTOR'${MODEL_ARG:+  ($MODEL_ARG)}"
 case "$MODE" in
   real|twin)
     RVIZ=false; [ "$MODE" = real ] && RVIZ=true
     ros camera "ros2 launch ros2/d455.launch.py rviz:=$RVIZ $MOUNT_ARGS"
     sleep 6
-    ros yolo "ros2 launch ros2/egg_yolo.launch.py"
-    ros egg_xyz "python3 ros2/egg_xyz.py"
-    sleep 4
-    ros image "ros2 run rqt_image_view rqt_image_view /yolo/dbg_image"
+    detector real
     if [ "$MODE" = twin ]; then
         (cd "$ROOT" && isaac/isaac_ros2.sh isaac/meshari_d455.py --run --twin $TWIN_ARGS) >"$LOG/isaac.log" 2>&1 &
         PIDS+=($!)
@@ -57,10 +79,7 @@ case "$MODE" in
     PIDS+=($!)
     echo "  started isaac sim  (log: $LOG/isaac.log)"
     ros tf "ros2 launch ros2/d455.launch.py camera:=false"
-    ros yolo "ros2 launch ros2/egg_yolo.launch.py source:=sim"
-    ros egg_xyz "python3 ros2/egg_xyz.py --ros-args -r __ns:=/sim -p detections:=/sim/yolo/detections_3d"
-    sleep 4
-    ros image "ros2 run rqt_image_view rqt_image_view /sim/yolo/dbg_image"
+    detector sim
     ;;
   *) echo "unknown mode '$MODE' (real | twin | sim)"; exit 1 ;;
 esac

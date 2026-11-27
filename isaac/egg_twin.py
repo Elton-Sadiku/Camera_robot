@@ -9,6 +9,8 @@ with the real pipeline running (ros2/d455.launch.py, ros2/egg_yolo.launch.py, ro
   - Several eggs: up to MAX_EGGS sim eggs (/World/TestEgg, /World/TwinEgg1, ...). Each sim egg stays paired with the
     same real egg (nearest position, within MATCH_M), so eggs do not swap; positions are smoothed (no jitter).
   - A sim egg is hidden when its real egg has not been seen for HIDE_AFTER_S.
+  - Publishes /twin/egg_poses (PoseArray, base_link) every Isaac frame: where the sim eggs are NOW, stamped with
+    the camera image time of the newest real detection -> scripts/measure_sync.py measures the delay camera -> sim.
   - real_table_z=0.992 (default): height = sim table + the egg's height ABOVE THE REAL TABLE (a lying egg lies on the
     sim table, a lifted egg rises by the same amount). 0.992 m = the desk test rig (camera 16.1 cm above the table).
     real_table_z=None: X, Y, Z as measured (camera on the robot, real table = sim table).
@@ -17,7 +19,7 @@ import math
 import time
 
 import rclpy
-from geometry_msgs.msg import PoseArray
+from geometry_msgs.msg import Pose, PoseArray
 from pxr import Gf, Sdf, UsdGeom
 
 MAX_EGGS = 6           # sim eggs available
@@ -48,6 +50,8 @@ class EggTwin:
             rclpy.init()
         self.node = rclpy.create_node("egg_twin")
         self.node.create_subscription(PoseArray, topic, self._on_points, 10)
+        self.pub = self.node.create_publisher(PoseArray, "/twin/egg_poses", 10)
+        self.src_stamp = None
         mode = f"height above the real table (z {real_table_z:.3f} m)" if real_table_z is not None else "real X, Y, Z"
         print(f"[egg twin] following {topic} -> up to {MAX_EGGS} sim eggs ({mode})", flush=True)
 
@@ -58,6 +62,8 @@ class EggTwin:
 
     def _on_points(self, m):
         now = time.time()
+        if m.poses:
+            self.src_stamp = m.header.stamp
         dets = [(q.position.x, q.position.y, self._z(q.position.z)) for q in m.poses]
         # pair each detection with the nearest tracked egg (closest pairs first), within MATCH_M
         pairs = sorted(((math.dist(d[:2], s["pos"][:2]), i, j) for i, d in enumerate(dets)
@@ -96,3 +102,13 @@ class EggTwin:
                 n = sum(x["visible"] for x in self.slots)
                 print(f"[egg twin] egg {k + 1} " + (f"seen at x={s['pos'][0]:.3f} y={s['pos'][1]:.3f} z={s['pos'][2]:.3f}"
                                                     if seen else "gone - hidden") + f"  ({n} egg(s) in view)", flush=True)
+        if self.src_stamp is not None:          # the sim eggs as they are in this frame (for scripts/measure_sync.py)
+            out = PoseArray()
+            out.header.stamp, out.header.frame_id = self.src_stamp, "base_link"
+            for s in self.slots:
+                if s["visible"]:
+                    q = Pose()
+                    q.position.x, q.position.y, q.position.z = s["pos"]
+                    q.orientation.w = 1.0
+                    out.poses.append(q)
+            self.pub.publish(out)
