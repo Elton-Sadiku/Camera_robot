@@ -23,7 +23,16 @@ the camera. The same pipeline runs on the **real camera** and on a **simulated D
    free_detector/egg_detect_node.py: D-FINE (Apache-2.0, ONNX + onnxruntime) + depth → the same /egg/point(s)
 ```
 
-Start everything with one command (`scripts/start_all.sh`) or the **Meshari Egg Detection** desktop icon.
+Start everything with one command (`scripts/start_all.sh`) or the **Meshari Egg Detection (Task2)** desktop icon.
+
+**Two folders** (`~/Desktop/camera/Camera1/`):
+
+| Folder | What it holds | Use it for |
+|---|---|---|
+| `Task2/` | the latest version, ready to run: code, documents, the models in use (`egg_ball_ls_yolov8s.pt`, `free_detector/models/dfine_s_egg_ball/`), the Isaac Sim scenes | running, demos, handing over |
+| `Camera_robot/` | the git repository (branch `egg_detecting`) + training data (`detection/data/`, 809 MB), older models, training runs, photos | development, retraining, commits |
+
+Changes are made and committed in `Camera_robot/` and copied to `Task2/`.
 
 Measured results (details in [Results](#results) and [Tests](#tests-delay-synchronisation-accuracy)): the egg is
 found in **160 / 160** held-out real frames and a ping-pong ball is called "egg" in **0 / 40** ball frames; delay from
@@ -61,7 +70,7 @@ egg; the egg's height comes out within **~1 cm** of the table geometry.
 ## Files
 
 ```
-Camera_robot/
+Task2/   (= Camera_robot/ in git)
 ├── env.sh                         per-terminal ROS 2 environment (leaves conda, sources ROS + ~/ros2_ws, DDS profile)
 ├── shared/d455_model.py           camera mount on the robot: MOUNT_XYZ / MOUNT_RPY (one place)
 ├── ros2/
@@ -82,11 +91,12 @@ Camera_robot/
 │   ├── train_egg_yolo.py          YOLOv8s training on the GPU (Isaac Sim's CUDA torch)
 │   ├── import_label_studio.py     Label Studio "YOLO with Images" export → dataset (classes by name: egg 0, ball 1)
 │   ├── yolo/egg_ball_ls_yolov8s.pt    ★ the model in use: egg + ball, real + sim + Label Studio frames
+│   │   only in Camera_robot/ (not needed to run):
 │   ├── yolo/egg_cloud_yolo26s.pt      egg-only YOLO26s trained on the Ultralytics platform (102 photos; tested, not used)
 │   ├── yolo/egg_real_sim_yolov8s.pt   earlier 1-class model (real + sim)
 │   ├── yolo/egg_yolov8s.pt            real-only model (start point for the real + sim training)
 │   ├── yolo/yolov8s-worldv2-egg.pt    zero-shot YOLO-World "egg" (used by the auto-labeller)
-│   └── data/                      recordings + datasets + egg_real_sim.yaml / egg_ball.yaml (git-ignored)
+│   └── data/                      recordings + datasets + egg_ball_ls.yaml and train/val lists (git-ignored)
 ├── config/
 │   ├── d455_color_intrinsics.json real colour calibration (640×480, fx 385.7) — used by the sim colour camera
 │   ├── d455_intrinsics.json       real depth calibration (424×240, fx 217.2) — used by the sim depth camera
@@ -111,9 +121,9 @@ Camera_robot/
                                    team_photos/ (screenshots), task description and earlier reports
 ```
 
-Models (`*.pt`), recordings (`detection/data/`), training runs (`detection/yolo/runs/`) and the `.usd` scenes are
-**git-ignored** (too large for GitHub):
-back them up separately. `meshari_d455.usd` can always be rebuilt with `isaac/meshari_d455.py`.
+Models (`*.pt`, `free_detector/models/`), recordings (`detection/data/`, `record/*.jpg`), training runs
+(`detection/yolo/runs/`), Label Studio exports and the `.usd` scenes are **git-ignored** (too large for GitHub):
+back them up separately (`Task2/` holds the ones needed to run). `meshari_d455.usd` can always be rebuilt with `isaac/meshari_d455.py`.
 
 ---
 
@@ -136,8 +146,9 @@ values as defaults — **keep all three equal**. Any value can be overridden whe
 `ros2 launch ros2/d455.launch.py mount_pitch:=0.1169 mount_roll:=-0.0105` (radians).
 
 The pitch is **measured**, not guessed — see [Measuring the camera tilt](#measuring-the-camera-tilt).
-**Current state:** the camera is on the desk test rig, straightened, measured **6.7° down, roll −0.6°**, 16.1 cm
-above the table; `scripts/start_all.sh` passes these (`mount_pitch:=0.1169 mount_roll:=-0.0105`). `MOUNT_RPY`
+**Current state:** the camera is on the desk test rig. `scripts/start_all.sh` passes the earlier measurement
+**6.7° down, roll −0.6°** (`mount_pitch:=0.1169 mount_roll:=-0.0105`), but `scripts/measure_mount.py` read
+**13.5° / 1.3°, 15.8 cm** on 27.11.2026 (the camera has moved) — update `MOUNT_ARGS` before the next tests. `MOUNT_RPY`
 (11.55°) is the earlier rig measurement and the robot/sim default — set both to the value measured on the robot.
 With the table 20 cm below and its near edge 20 cm in front of the camera, a tilt of ≥ 10° shows the whole table:
 an egg is visible from the table edge (≈ 27 cm from the camera, the closest possible on that table) to beyond 1 m.
@@ -162,6 +173,17 @@ Python, so Isaac Sim itself is not changed:
 The auto-labeller needs OpenAI CLIP once (to build the YOLO-World "egg" model); pip 22 cannot install it, so copy
 the `clip/` folder of https://github.com/ultralytics/CLIP into `~/.local/lib/python3.10/site-packages/`.
 
+For the **license-free detector** (`free_detector/`): onnxruntime for ROS's Python in its own folder, and (only to
+retrain) the D-FINE start weights once (~40 MB, Apache-2.0); Isaac Sim's Python already has CUDA torch + transformers:
+```bash
+/usr/bin/python3 -m pip install --target ~/egg_free_pkgs --no-deps onnxruntime==1.20.1
+~/isaacsim/python.sh -c "from huggingface_hub import snapshot_download; snapshot_download('ustc-community/dfine-small-coco')"
+```
+For **Label Studio** (labelling): its own conda env, Python 3.12 (conda base is 3.14, not supported):
+```bash
+conda create -y -n labelstudio python=3.12 && conda run -n labelstudio pip install label-studio "sentry-sdk<3"
+```
+
 Every ROS terminal starts with `cd ~/Desktop/camera/Camera1/Camera_robot && source ./env.sh`.
 
 ---
@@ -175,8 +197,9 @@ scripts/start_all.sh sim        # Isaac Sim only (its D455 + test egg, yolo on /
 DETECTOR=free scripts/start_all.sh            # any mode with the license-free detector (free_detector/)
 MODEL=detection/yolo/<other>.pt scripts/start_all.sh real   # another model (DETECTOR=free: a model.onnx)
 ```
-Or double-click **Meshari Egg Detection** on the Desktop (also in the app menu; the first time: right-click →
-*Allow Launching*). The terminal window shows the eggs' positions; **close it (or Ctrl+C) to stop everything**.
+Or double-click **Meshari Egg Detection (Task2)** on the Desktop (starts `Task2/scripts/start_all.sh twin`;
+the older **Meshari Egg Detection** icon starts the same from `Camera_robot/`; both also in the app menu; the first
+time: right-click → *Allow Launching*). The terminal window shows the eggs' positions; **close it (or Ctrl+C) to stop everything**.
 The default mode starts: real D455 (no RViz), yolo, `egg_xyz.py`, the image window and Isaac Sim with the egg twin. Logs: `/tmp/meshari_egg/*.log`. The desk-test-rig values
 (`MOUNT_ARGS`, `TWIN_ARGS`) are at the top of the script; on the robot set `MOUNT_ARGS=""` and
 `TWIN_ARGS="--twin-real-z"`.
@@ -313,7 +336,7 @@ the GUI: stop the simulation, run it from the Script Editor, press Play (run aga
 ### `isaac/egg_twin.py` (digital twin)
 `isaac/isaac_ros2.sh isaac/meshari_d455.py --run --twin`, with the real pipeline running, gives **every egg the real
 D455 sees** an egg in Isaac Sim at the same place (`/egg/points` = all accepted eggs from `egg_xyz.py`, `base_link` =
-Isaac's world, ~18 Hz). Up to 6 eggs; each sim egg stays paired with the same real egg (nearest position, 10 cm),
+Isaac's world, ~10–12 Hz with the CPU detector). Up to 6 eggs; each sim egg stays paired with the same real egg (nearest position, 10 cm),
 smoothed, and is hidden 1 s after its real egg disappears. Height = sim table + the egg's height above the real
 table, so a lifted egg rises: `--twin-real-table <z>` sets the real table's height in `base_link` (desk test rig:
 lying eggs read Z ≈ 1.050 → `1.028`); `--twin-real-z` uses the real Z as is (camera on the robot, same table).
@@ -369,11 +392,13 @@ balls away from egg size. **Fix: a second class, `ball`**, so the model has to d
 | Isaac Sim eggs | `gen_egg_rgb.py` (as above) | 3,000 images |
 | Isaac Sim eggs + balls | `gen_egg_rgb.py --balls`: ping-pong / golf balls 38–45 mm, orange / white / yellow / egg-brown, 40 % on a small holder, labelled class 1 | 3,000 images, 4,017 eggs, 3,798 balls |
 
-Relabel and train (dataset list: `detection/data/egg_ball.yaml`, classes `0: egg`, `1: ball`):
+Relabel and train (classes `0: egg`, `1: ball`; first the auto-labelled data, then with the Label Studio frames):
 ```bash
 python3 detection/label_egg_yolo.py --egg 0:15,0:16,0:17 --skip 0:13,1:7
 PYTHONPATH=~/egg_train_pkgs ~/isaacsim/python.sh detection/train_egg_yolo.py \
     --data detection/data/egg_ball.yaml --base detection/yolo/egg_real_sim_yolov8s.pt --name egg_ball --epochs 35
+PYTHONPATH=~/egg_train_pkgs ~/isaacsim/python.sh detection/train_egg_yolo.py \
+    --data detection/data/egg_ball_ls.yaml --base <the egg_ball weights> --name egg_ball_ls --epochs 30   # model in use
 ```
 **Model in use: `detection/yolo/egg_ball_ls_yolov8s.pt`**, trained on the lists in `detection/data/egg_ball_ls.yaml`
 (the data above + hand-labelled Label Studio frames of a video with egg and ball together, ×3).
@@ -584,4 +609,5 @@ python3 scripts/record_demo_video.py --seconds 40 --out Documentation/egg_demo_l
 * **Egg orientation** is not estimated (the twin egg always has the same rotation).
 * When the camera is mounted in the robot, measure the tilt there and update `MOUNT_RPY`, set `MOUNT_ARGS=""` and
   `TWIN_ARGS="--twin-real-z"` in `scripts/start_all.sh` (measure with `scripts/measure_mount.py`).
-* GPU inference in ROS needs a CUDA torch for Python 3.10 (CPU gives ~18 Hz, enough for grasping).
+* GPU inference in ROS needs a CUDA torch (or onnxruntime-gpu) for Python 3.10; the CPU gives ~10–12 Hz live,
+  enough for picking still eggs.
